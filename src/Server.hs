@@ -1,3 +1,4 @@
+{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE TypeOperators #-}
@@ -8,15 +9,13 @@ module Server
   )
 where
 
-import           System.Random                  ( Random(randomIO) )
 import           Data.Aeson
 
-import           Network.Wai                    ( Application )
 import           Network.Wai.Handler.Warp       ( run )
 import           Servant
 import           GHC.Generics                   ( Generic )
-import           Data.List.Split                ( chunksOf )
 import           Data.List                      ( transpose )
+import           System.Random
 
 
 data TurnReq = TurnReq { sideTurn :: Side, gridReq :: [[String]] } deriving (Generic, Show)
@@ -35,7 +34,18 @@ instance ToJSON TurnRes where
   toEncoding = genericToEncoding defaultOptions
 instance FromJSON TurnRes
 
-data Side = X | O deriving (Generic, Eq, Read, Show)
+instance Random (Int,Int) where
+  random g1 = ((r1, r2), g3)
+   where
+    (r1, g2) = random g1
+    (r2, g3) = random g2
+  randomR ((a1, a2), (b1, b2)) g1 = ((a, b), g3)
+   where
+    (a, g2) = randomR (a1, b1) g1
+    (b, g3) = randomR (a2, b2) g2
+
+
+data Side = X | O | Draw deriving (Generic, Eq, Read, Show)
 
 data Cell = Input Side | Empty
   deriving (Eq, Read)
@@ -62,26 +72,40 @@ api = Proxy
 
 server :: Server API
 server (TurnReq cell grid)
-  | gameSolved grid = return (TurnRes (Just X) grid)
-  | gameSolved (makeTurn cell grid) = return
-    (TurnRes (Just O) (makeTurn cell grid))
-  | otherwise = return (TurnRes Nothing (makeTurn cell grid))
-
-makeTurn :: Side -> [[String]] -> [[String]]
-makeTurn X grid = chunksOf (length grid) (grid1 ++ grid2)
+  | gameSolved grid
+  = return $ TurnRes (Just cell) grid
+  | not (any (elem " ") grid)
+  = return $ TurnRes (Just Draw) grid
+  | gameSolved (makePseudoRandomTurn (otherSide cell) grid)
+  = return $ TurnRes (Just $ otherSide cell)
+                     (makePseudoRandomTurn (otherSide cell) grid)
+  | not (any (elem " ") (makePseudoRandomTurn (otherSide cell) grid))
+  = return $ TurnRes (Just Draw) (makePseudoRandomTurn (otherSide cell) grid)
+  | otherwise
+  = return (TurnRes Nothing (makePseudoRandomTurn (otherSide cell) grid))
  where
-  grid1 = takeWhile (/= " ") (concat grid)
-  grid2 = "O" : tail (dropWhile (/= " ") (concat grid))
+  otherSide X = O
+  otherSide O = X
 
-makeTurn O grid = chunksOf (length grid) (grid1 ++ grid2)
+makePseudoRandomTurn :: Side -> [[String]] -> [[String]]
+makePseudoRandomTurn side grid = (insert row col (show side) grid)
  where
-  grid1 = takeWhile (/= " ") (concat grid)
-  grid2 = "X" : tail (dropWhile (/= " ") (concat grid))
-
-randCell :: IO Int
-randCell = do
-  num <- randomIO :: IO Int
-  return (num `mod` 9)
+  (row, col) = finalRandCell randCells
+  finalRandCell (c@(row', col') : cs) =
+    if grid !! row' !! col' == " " then c else finalRandCell cs
+  randCells = randomRs ((0, 0), (length grid - 1, length grid - 1))
+                       (mkStdGen seed)
+   where
+    seed = sum (accum 0 (concat grid))
+    accum _ []       = []
+    accum n (x : xs) = seedhelper x * n : accum (n + 1) xs
+    seedhelper " " = 0
+    seedhelper "X" = 1
+    seedhelper "O" = -1
+  insert r c el list = r1 ++ ((c1 ++ (el : c2)) : r2)
+   where
+    (r1, (c' : r2)) = splitAt r list
+    (c1, (_ : c2) ) = splitAt c c'
 
 gameSolved :: [[String]] -> Bool
 gameSolved grid =
@@ -92,9 +116,6 @@ gameSolved grid =
   mainDiagonalSolved = solved . getDiagonal $ grid
   sideDiagonalSolved = solved . getDiagonal $ (reverse <$> grid)
   solved row = (row == xs) || (row == os)
-  solved' row =
-    ((length . filter (== Input X) $ row) >= 3)
-      || ((length . filter (== Input O) $ row) >= 3)
   xs = replicate (length grid) "X"
   os = replicate (length grid) "O"
   getDiagonal xs = zipWith (!!) xs [0 ..]

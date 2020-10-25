@@ -73,8 +73,28 @@ test-suite tictactoeserver-test
     , hspec
     , hspec-wai
     , hspec-wai-json
+    , QuickCheck
     , servant-server
     , tictactoeserver
     , wai
     , warp
+  default-language: Haskell2010
+
+benchmark bench-resp
+  type:       exitcode-stdio-1.0
+  main-is:    BenchResp.hs
+  hs-source-dirs:
+    benchmark
+  build-depends: 
+      base
+    , aeson
+    , time
+    , http-conduit
+    , split
+    , random
+  ghc-options:   
+    -O2
+    -fmax-simplifier-iterations=10
+    -fdicts-cheap
+    -fspec-constr-count=6
   default-language: Haskell2010
